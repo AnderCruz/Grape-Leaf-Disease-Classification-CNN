@@ -7,6 +7,7 @@ import io
 import gdown
 import plotly.express as px
 import os
+import requests
 
 @st.cache_resource
 def load_model():
@@ -15,21 +16,27 @@ def load_model():
     # Check if file already exists, if not, download it
     if not os.path.exists(model_path):
         st.info("📥 Downloading model...")
-        url = 'https://drive.google.com/uc?id=1Wz8wIWrdcCAsIsoewJ705Qn6Tn3OopOT'
+        url = 'https://drive.google.com/uc?id=1MGimNo_hki1LDy1DwybLkvdvSWUISJF7'
         try:
             gdown.download(url, model_path, quiet=False)
             st.success("✅ Model download completed!")
         except Exception as e:
             st.error(f"❌ Download error: {str(e)}")
-            return None
+            st.info("🔄 Trying alternative download method...")
+            return download_model_alternative(model_path)
     
-    # Check if file was downloaded correctly
-    if not os.path.exists(model_path):
-        st.error("❌ Model file was not downloaded correctly")
-        return None
+    # Verify the downloaded file
+    try:
+        file_size = os.path.getsize(model_path)
+        if file_size == 0:
+            st.error("❌ Downloaded file is empty")
+            os.remove(model_path)
+            return download_model_alternative(model_path)
+    except:
+        pass
     
     try:
-        # Load the model
+        # Load the model with error handling
         interpreter = tf.lite.Interpreter(model_path=model_path)
         interpreter.allocate_tensors()
         st.success("✅ Model loaded successfully!")
@@ -45,7 +52,47 @@ def load_model():
         
     except Exception as e:
         st.error(f"❌ Error loading model: {str(e)}")
+        st.info("🔄 Trying to re-download the model...")
+        # Remove potentially corrupted file
+        if os.path.exists(model_path):
+            os.remove(model_path)
+        return download_model_alternative(model_path)
+
+def download_model_alternative(model_path):
+    """Alternative download method"""
+    try:
+        st.info("📥 Trying alternative download URL...")
+        # Alternative Google Drive download URL format
+        url = 'https://drive.google.com/uc?export=download&id=1MGimNo_hki1LDy1DwybLkvdvSWUISJF7'
+        
+        response = requests.get(url, stream=True)
+        total_size = int(response.headers.get('content-length', 0))
+        
+        with open(model_path, 'wb') as file:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    file.write(chunk)
+        
+        st.success("✅ Alternative download completed!")
+        
+        # Try loading again
+        interpreter = tf.lite.Interpreter(model_path=model_path)
+        interpreter.allocate_tensors()
+        return interpreter
+        
+    except Exception as e:
+        st.error(f"❌ Alternative download failed: {str(e)}")
         return None
+
+def verify_model_file(model_path):
+    """Verify if the file is a valid TensorFlow Lite model"""
+    try:
+        with open(model_path, 'rb') as f:
+            header = f.read(4)
+            # TensorFlow Lite models should start with 'TFL3'
+            return header == b'TFL3'
+    except:
+        return False
 
 def load_image(interpreter):
     st.subheader("📷 Image Upload")
@@ -176,15 +223,49 @@ def main():
         "in grape vine leaves. Upload an image for analysis."
     )
     
+    # Add troubleshooting section
+    with st.sidebar.expander("🛠️ Troubleshooting"):
+        st.markdown("""
+        **If the model fails to load:**
+        1. Check your internet connection
+        2. Reload the page
+        3. Ensure the model file is not corrupted
+        4. Try using a different browser
+        """)
+    
     # Load model
     with st.spinner('🚀 Initializing model...'):
         interpreter = load_model()
     
     if interpreter is None:
-        st.error("Could not load the model. Please try reloading the page.")
+        st.error("""
+        ❌ Could not load the model. This could be due to:
+        - Network connectivity issues
+        - Corrupted model file
+        - Incompatible model format
+        
+        Please try:
+        1. Reloading the page
+        2. Checking your internet connection
+        3. Contacting support if the issue persists
+        """)
+        
+        # Option to upload model manually
+        st.info("📤 Alternatively, you can upload the model file manually:")
+        uploaded_model = st.file_uploader("Upload .tflite model file", type=['tflite'])
+        if uploaded_model is not None:
+            try:
+                with open('uploaded_model.tflite', 'wb') as f:
+                    f.write(uploaded_model.getvalue())
+                interpreter = tf.lite.Interpreter(model_path='uploaded_model.tflite')
+                interpreter.allocate_tensors()
+                st.success("✅ Uploaded model loaded successfully!")
+                st.experimental_rerun()
+            except Exception as e:
+                st.error(f"❌ Error loading uploaded model: {str(e)}")
         return
     
-    # Load image (now passing interpreter as parameter)
+    # Load image
     image = load_image(interpreter)
     
     # Make prediction if image was loaded
